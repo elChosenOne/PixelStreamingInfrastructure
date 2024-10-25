@@ -26,6 +26,7 @@
     "webpack-dev-server": "^4.11.1"
   },
   "dependencies": {
+    "@epicgames-ps/react-pixelstreamingfrontend-react-ue5.4": "file:",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   }

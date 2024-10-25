@@ -21,6 +21,7 @@
     "start:windows": "platform_scripts\\cmd\\node\\node.exe cirrus.js"
   },
   "dependencies": {
+    "@epicgames-ps/cirrus-webserver": "file:",
     "bcryptjs": "^2.4.3",
     "express": "^4.18.2",
     "express-rate-limit": "^6.7.0",
@@ -30,6 +31,7 @@
     "passport": "^0.6.0",
     "passport-local": "^1.0.0",
     "run-script-os": "^1.1.6",
+    "socket.io-client": "^4.8.0",
     "ws": "^7.1.2",
     "y18n": "^5.0.5",
     "yargs": "^15.3.0"

@@ -29,6 +29,7 @@
         "webpack-cli": "^5.0.1"
     },
     "dependencies": {
+        "@epicgames-ps/lib-pixelstreamingfrontend-ui-ue5.4": "file:",
         "jss": "^10.9.2",
         "jss-plugin-camel-case": "^10.9.2",
         "jss-plugin-global": "^10.9.2"

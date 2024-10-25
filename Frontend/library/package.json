@@ -32,6 +32,7 @@
         "webpack-cli": "^5.0.1"
     },
     "dependencies": {
+        "@epicgames-ps/lib-pixelstreamingfrontend-ue5.4": "file:",
         "sdp": "^3.1.0"
     },
     "repository": {
