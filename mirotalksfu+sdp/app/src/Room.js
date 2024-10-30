@@ -5,6 +5,8 @@ const Logger = require('./Logger');
 const log = new Logger('Room');
 const { createSdpEndpoint } = require('mediasoup-sdp-bridge');
 
+const { sendOfferToStreamer, sendOfferToAllStreamers } = require('./SignallingWebServer/cirrus');
+
 const { audioLevelObserverEnabled, activeSpeakerObserverEnabled } = config.mediasoup.router;
 
 module.exports = class Room {
@@ -263,6 +265,14 @@ module.exports = class Room {
         return peer;
     }
 
+    getSDPeer(socket_id) {
+        if (!this.sdpeers.has(socket_id)) return;
+
+        const peer = this.sdpeers.get(socket_id);
+
+        return peer;
+    }
+
     getPeers() {
         return this.peers;
     }
@@ -274,6 +284,17 @@ module.exports = class Room {
     getProducerListForPeer() {
         const producerList = [];
         this.peers.forEach((peer) => {
+            const { peer_name, peer_info } = peer;
+            peer.producers.forEach((producer) => {
+                producerList.push({
+                    producer_id: producer.id,
+                    peer_name: peer_name,
+                    peer_info: peer_info,
+                    type: producer.appData.mediaType,
+                });
+            });
+        });
+        this.sdpeers.forEach((peer) => {
             const { peer_name, peer_info } = peer;
             peer.producers.forEach((producer) => {
                 producerList.push({
@@ -418,7 +439,7 @@ module.exports = class Room {
 
         const { peer_name, peer_info } = peer;
 
-        console.log("Notificando a los peers");
+        //console.log("Notificando a los peers");
         this.broadCast(socket_id, 'newProducers', [
             {
                 producer_id: id,
@@ -429,11 +450,25 @@ module.exports = class Room {
             },
         ]);
 
+
+        /*console.log("SdpOffer:", sdpOffer);
+        this.broadCast(socket_id, 'newSDPProducers', [
+            {
+                producer_id: id,
+                producer_socket_id: socket_id,
+                producerTransportId: producerTransportId,
+                peer_name: peer_name,
+                peer_info: peer_info,
+                type: type,
+                sdpOffer: sdpOffer,
+            },
+        ]);
+
         for (let peer of this.sdpeers.values()) {
             //console.log("SDP Peer:", peer);
             
             //this.send(peer_id, action, data);
-        }
+        }*/
 
         return id;
     }
@@ -584,8 +619,8 @@ module.exports = class Room {
     // SDP USERS
     // ####################################################
 
-    async createSDPTransport(socketData, sdpOffer) {
-        if (!this.peers.has(socketData.id)) return;
+    async createSDPTransport(socket_id) {
+        if (!this.sdpeers.has(socket_id)) return;
 
         const { maxIncomingBitrate, initialAvailableOutgoingBitrate, listenInfos } = this.webRtcTransport;
 
@@ -615,7 +650,10 @@ module.exports = class Room {
             } catch (error) {}
         }
 
-        const peer = this.getPeer(socketData.id);
+        //console.log("SDPeers", this.sdpeers.keys(), socket_id);
+
+        const peer = this.getSDPeer(socket_id);
+        //console.log("Peer:", peer);
 
         peer.addTransport(transport);
 
@@ -656,90 +694,79 @@ module.exports = class Room {
                 transport_id: transport.id,
             });
         });
-        const sdpEndpoint = createSdpEndpoint(transport, this.getRtpCapabilities());
-        const addData = await this.addSDPUser(socketData, sdpEndpoint, sdpOffer);
-        addData.transport_id = transport.id;
 
-        return addData;
+        return transport.id;
     }
 
-    async addSDPUser(socketData, sdpEndpoint, sdpOffer) {
-        if (!this.peers.has(socketData.id)) return;
+    async addSDPProducer(socket_id, transport_id, sdpOffer) {
+        if (!this.sdpeers.has(socket_id)) return;
 
-        const peer = this.getPeer(socketData.id);
+        const peer = this.getSDPeer(socket_id);
 
-        const producers = await peer.createSDPProducer(sdpEndpoint, sdpOffer);
+        const producers = await peer.createSDPProducer(transport_id, sdpOffer, this.getRtpCapabilities());
+        //console.log("Productores", producers)
 
-
-        this.broadCast(socketData.id, 'newProducers', [
+        this.broadCast(socket_id, 'newProducers', [
             {
                 producer_id: producers.audio.id,
                 producer_socket_id: producers.audio,
-                peer_name: socketData.peer_name,
-                peer_info: socketData.peer_info,
+                peer_name: peer.peer_name,
+                peer_info: peer.peer_info,
                 type: "audioType",
             },
             {
                 producer_id: producers.video.id,
                 producer_socket_id: producers.video,
-                peer_name: socketData.peer_name,
-                peer_info: socketData.peer_info,
+                peer_name: peer.peer_name,
+                peer_info: peer.peer_info,
                 type: "videoType",
             },
         ]);
 
         // Obtain the corresponding SDP answer and reply the remote endpoint with it.
-        const sdpAnswer = sdpEndpoint.createAnswer();
+        const sdpAnswer = peer.sdpProducer.createAnswer();
         
         //return sdpAnswer;
         return { sdpAnswer: sdpAnswer, producers: producers };
     }
 
-    
-    async SDPConsume(socket_id, consumer_transport_id, producer_id, rtpCapabilities) {
-        if (!this.sdpeers.has(socket_id)) return;
+    async consumeAudioProducers(peer_id, consumer_transport_id) {
+        if (!this.sdpeers.has(peer_id)) return;
+        const SDpeer = this.getSDPeer(peer_id);
 
-        //console.log("rtcpCapabilities", rtpCapabilities);
-        if (
-            !this.router.canConsume({
-                producerId: producer_id,
-                rtpCapabilities,
-            })
-        ) {
-            log.warn('Cannot consume', {
-                socket_id,
-                consumer_transport_id,
-                producer_id,
-            });
-            return;
-        }
+        console.log("Consuming audio producers");
+        const producerList = [];
+        this.peers.forEach((peer) => {
+            if (peer.peer_audio) {
+                //console.log("SDP offer", peer.sdpOffer);
+                peer.producers.forEach(async (producer) => {
+                    if (producer.appData.mediaType === "audioType") {
+                        const rtpCapabilities = this.getRtpCapabilities();
+                        await SDpeer.createConsumer(consumer_transport_id, producer.id, rtpCapabilities);
+                        const signal = await SDpeer.createOfferSignal();
 
-        const peer = this.sdpeers.get(socket_id);
-        
+                        //console.log("Signal:", signal);
 
-
-        const peerConsumer = await peer.createConsumer(consumer_transport_id, producer_id, rtpCapabilities);
-
-        if (!peerConsumer) {
-            throw new Error(`Peer consumer kind ${kind} with id ${consumer_transport_id} not found`);
-        }
-
-        const { consumer, params } = peerConsumer;
-
-        const { id, kind } = consumer;
-
-        consumer.on('producerclose', () => {
-            log.debug('Consumer closed due to "producerclose" event');
-
-            peer.removeConsumer(id);
-
-            // Notify the client that consumer is closed
-            this.send(socket_id, 'consumerClosed', {
-                consumer_id: id,
-                consumer_kind: kind,
-            });
+                        sendOfferToStreamer(peer_id, peer.id, signal);
+                        console.log("Peer audio", {
+                            producer_id: producer.id,
+                            peer_name: peer.peer_name,
+                            peer_info: peer.peer_info,
+                            type: producer.appData.mediaType,
+                        });
+                    }
+                });
+            }
         });
+        return producerList;
+    }
 
-        return params;
+    async consumeSDPAnswer(peer_id, sdpAnswer) {
+        if (!this.sdpeers.has(peer_id)) return;
+        const SDpeer = this.getSDPeer(peer_id);
+
+        SDpeer.consumeSDPAnswer(sdpAnswer);
+
+        //console.log("Consuming audio producers");
     }
 };

@@ -2,6 +2,7 @@
 
 const Logger = require('./Logger');
 const log = new Logger('Peer');
+const { createSdpEndpoint } = require('mediasoup-sdp-bridge');
 
 module.exports = class Peer {
     constructor(socket_id, data) {
@@ -28,6 +29,10 @@ module.exports = class Peer {
         this.peer_video_privacy = peer_video_privacy;
         this.peer_recording = peer_recording;
         this.peer_hand = peer_hand;
+
+        this.sdpProducer = null;
+        this.sdpConsumer = null;
+        this.sdpOffer = null;
 
         this.transports = new Map();
         this.consumers = new Map();
@@ -105,6 +110,7 @@ module.exports = class Peer {
             return false;
         }
 
+        console.log("Calling to connect for", transport_id);
         await this.transports.get(transport_id).connect({
             dtlsParameters: dtlsParameters,
         });
@@ -162,6 +168,9 @@ module.exports = class Peer {
             rtpParameters: producer_rtpParameters,
         });
 
+        const sdpEndpoint = createSdpEndpoint(producerTransport, producer_rtpParameters);
+        this.sdpProducer = sdpEndpoint;
+
         const { id, appData, type, kind, rtpParameters } = producer;
 
         appData.mediaType = producer_type;
@@ -180,6 +189,14 @@ module.exports = class Peer {
         } else {
             log.debug('Producer ----->', { type: type, kind: kind });
         }
+
+        //const offer = await this.createOfferSignal(producerTransportId, producer_rtpParameters);
+        //this.sdpOffer = offer;
+
+        console.log("Producer creado", this.peer_name);
+        console.log("Transportes", this.transports.keys());
+        console.log("Consumidores", this.consumers.keys());
+        console.log("Productores", this.producers.keys());
 
         producer.on('transportclose', () => {
             log.debug('Producer "transportclose" event');
@@ -233,7 +250,7 @@ module.exports = class Peer {
         if (!this.transports.has(consumer_transport_id)) return;
 
         const consumerTransport = this.transports.get(consumer_transport_id);
-        
+
         try {
             const consumer = await consumerTransport.consume({
                 producerId: producer_id,
@@ -243,9 +260,19 @@ module.exports = class Peer {
             });
             //console.log("Consumer", consumer);
 
+            const sdpEndpoint = createSdpEndpoint(consumerTransport, rtpCapabilities);
+            this.sdpConsumer = sdpEndpoint;
+
+            console.log("Setted sdpConsumer");
+
+            sdpEndpoint.addConsumeData();
+
+            sdpEndpoint.addConsumer(consumer);
+
             const { id, type, kind, rtpParameters, producerPaused } = consumer;
 
             this.consumers.set(id, consumer);
+
 
             if (['simulcast', 'svc'].includes(type)) {
                 // simulcast - L1T3/L2T3/L3T3 | svc - L3T3
@@ -262,7 +289,7 @@ module.exports = class Peer {
                         spatialLayer,
                         temporalLayer,
                     });
-                } catch (error) {}
+                } catch (error) { }
             } else {
                 log.debug('Consumer ----->', { type: type, kind: kind });
             }
@@ -322,18 +349,30 @@ module.exports = class Peer {
     // SDP USERS
     // ####################################################
 
-    async createSDPProducer(sdpEndpoint, sdpOffer) {
+    async createSDPProducer(transport_id, sdpOffer, rtpCapabilities) {
+        if (!this.transports.has(transport_id)) return;
+        console.log("Found Transport ID", transport_id);
+        const transport = this.transports.get(transport_id);
+
+        const sdpEndpoint = createSdpEndpoint(transport, rtpCapabilities);
+        this.sdpProducer = sdpEndpoint;
+        sdpEndpoint.addConsumeData();
+
+        //console.log("Sdp offer", sdpOffer);
+
         const producers = await sdpEndpoint.processOffer(sdpOffer);
         let videoProducer = null;
         let audioProducer = null;
+
+        console.log("Producers", producers);
 
         for (const producer of producers) {
             const { id, kind, type, rtpParameters, appData } = producer;
 
             this.producers.set(id, producer);
 
-            if (kind == 'video') { 
-                videoProducer = producer; 
+            if (kind == 'video') {
+                videoProducer = producer;
                 this.peer_video = true;
                 this.peer_info.peer_video = true;
                 appData.mediaType = "videoType";
@@ -357,72 +396,36 @@ module.exports = class Peer {
                 log.debug('Producer ----->', { type: type, kind: kind, id: id });
             }
 
+            console.log("SDP Producer creado", this.peer_name);
+            console.log("Transportes", this.transports.keys());
+            console.log("Consumidores", this.consumers.keys());
+            console.log("Productores", this.producers.keys());
+
             producer.on('transportclose', () => {
                 log.debug('Producer "transportclose" event');
                 this.closeProducer(id);
-            });   
+            });
         }
         return { video: videoProducer, audio: audioProducer };
     }
 
-    async createSDPConsumer(producer_id, rtpCapabilities) {
-        if (!this.transports.has(consumer_transport_id)) return;
+    async createOfferSignal() {
+        //const consumer = await transport.consume({ producerId: producerId, rtpCapabilities: rtpCapabilities });
+        //consumer.observer.on("layerschange", function() { console.log("layer changed!", consumer.currentLayers); });
+        //this.sdpEndpoint.addConsumer(consumer);
+        //this.consumers.push(consumer);
 
-        const consumerTransport = this.transports.get(consumer_transport_id);
-        
-        try {
-            const consumer = await consumerTransport.consume({
-                producerId: producer_id,
-                rtpCapabilities,
-                enableRtx: true, // Enable NACK for OPUS.
-                paused: false,
-            });
-            console.log("Consumer", consumer);
+        const offerSignal = this.sdpConsumer.createOffer();
 
-            const { id, type, kind, rtpParameters, producerPaused } = consumer;
+        // send offer to peer
+        //signalServer.send(JSON.stringify(offerSignal));
+        //console.log("Offer signal", offerSignal);
 
-            this.consumers.set(id, consumer);
+        return offerSignal;
+    }
 
-            if (['simulcast', 'svc'].includes(type)) {
-                // simulcast - L1T3/L2T3/L3T3 | svc - L3T3
-                const { scalabilityMode } = rtpParameters.encodings[0];
-                const spatialLayer = parseInt(scalabilityMode.substring(1, 2)); // 1/2/3
-                const temporalLayer = parseInt(scalabilityMode.substring(3, 4)); // 1/2/3
-                try {
-                    await consumer.setPreferredLayers({
-                        spatialLayer: spatialLayer,
-                        temporalLayer: temporalLayer,
-                    });
-                    log.debug(`Consumer [${type}-${kind}] ----->`, {
-                        scalabilityMode,
-                        spatialLayer,
-                        temporalLayer,
-                    });
-                } catch (error) {}
-            } else {
-                log.debug('Consumer ----->', { type: type, kind: kind });
-            }
-
-            consumer.on('transportclose', () => {
-                log.debug('Consumer "transportclose" event');
-                this.removeConsumer(id);
-            });
-
-            return {
-                consumer: consumer,
-                params: {
-                    producerId: producer_id,
-                    id: id,
-                    kind: kind,
-                    rtpParameters: rtpParameters,
-                    type: type,
-                    producerPaused: producerPaused,
-                },
-            };
-        } catch (error) {
-            console.log("Error al crear consumidor", error);
-        }
-
-        return null;
+    async consumeSDPAnswer(sdpAnswer) {
+        console.log("Consume SDP Answer");
+        this.sdpConsumer.processAnswer(sdpAnswer);
     }
 };

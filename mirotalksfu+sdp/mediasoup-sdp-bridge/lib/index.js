@@ -141,7 +141,7 @@ class SdpEndpoint {
             planB: false,
         });
         const sendMsid = uuid_1.v4().substr(0, 8);
-        console.log("[SdpEndpoint.createOffer] Make 'sendonly' SDP Offer");
+        console.log("[SdpEndpoint.createOffer] Make 'sendonly' SDP Offer with %s Consumers", this.consumers.length);
         for (let i = 0; i < this.consumers.length; i++) {
             const mid = (_a = this.consumers[i].rtpParameters.mid) !== null && _a !== void 0 ? _a : "nomid";
             const kind = this.consumers[i].kind;
@@ -167,11 +167,13 @@ class SdpEndpoint {
         }
         this.remoteSdp = sdpAnswer;
         const remoteSdpObj = SdpTransform.parse(sdpAnswer);
+        console.log("Calling WebRtcTransport.connect() with remote SDP answer", this.webRtcTransport.id);
         await this.webRtcTransport.connect({
             dtlsParameters: MsSdpUtils.extractDtlsParameters({
                 sdpObject: remoteSdpObj,
             }),
         });
+        console.log("[SdpEndpoint.processAnswer] WebRtcTransport connected");
         {
         }
     }

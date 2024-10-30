@@ -4,7 +4,7 @@
 ███████ ███████ ██████  ██    ██ ███████ ██████  
 ██      ██      ██   ██ ██    ██ ██      ██   ██ 
 ███████ █████   ██████  ██    ██ █████   ██████  
-     ██ ██      ██   ██  ██  ██  ██      ██   ██ 
+     ██ ██      ██   ██  ██  ██  ██      ██   ██ 
 ███████ ███████ ██   ██   ████   ███████ ██   ██                                           
 
 dependencies: {
@@ -46,6 +46,7 @@ dependencies: {
  *
  */
 
+
 const express = require('express');
 const { auth, requiresAuth } = require('express-openid-connect');
 const cors = require('cors');
@@ -75,8 +76,16 @@ const { CaptureConsole } = require('@sentry/integrations');
 const restrictAccessByIP = require('./middleware/IpWhitelist.js');
 const packageJson = require('../../package.json');
 
-// SDP Bridge
-const { createSdpEndpoint } = require('mediasoup-sdp-bridge');
+
+// SDP Server
+const Cirrus = require('./SignallingWebServer/cirrus.js');
+//let WebSocket = require('ws');
+//const { Streamer, StreamerType, streamerMessageHandlers, requestStreamerId } = require('./SignallingWebServer/Streamer.js');
+//const { Player, PlayerType, WhoSendsOffer, sanitizePlayerId } = require('./SignallingWebServer/Player.js');
+//let streamers = new Map();
+//let players = new Map(); 
+//module.exports.streamers = streamers;
+//module.exports.players = players;
 
 // Email alerts and notifications
 const nodemailer = require('./lib/nodemailer');
@@ -593,8 +602,8 @@ function startServer() {
                 config.presenters && config.presenters.join_first
                     ? true
                     : config.presenters &&
-                      config.presenters.list &&
-                      config.presenters.list.includes(username).toString();
+                    config.presenters.list &&
+                    config.presenters.list.includes(username).toString();
 
             const token = encodeToken({ username: username, password: password, presenter: isPresenter });
             return res.status(200).json({ message: token });
@@ -952,12 +961,6 @@ function startServer() {
             }, 120000);
             */
         }
-    }
-
-    async function getMediasoupWorker() {
-        const worker = workers[nextMediasoupWorkerIdx];
-        if (++nextMediasoupWorkerIdx === workers.length) nextMediasoupWorkerIdx = 0;
-        return worker;
     }
 
     // ####################################################
@@ -1436,7 +1439,7 @@ function startServer() {
             socket.emit('newProducers', producerList);
         });
 
-        socket.on('getPeerCounts', async ({}, callback) => {
+        socket.on('getPeerCounts', async ({ }, callback) => {
             if (!roomList.has(socket.room_id)) return;
 
             const room = roomList.get(socket.room_id);
@@ -1951,74 +1954,6 @@ function startServer() {
             callback('Successfully exited room');
         });
 
-        socket.on('SDPConnect', async ({ room_id, clientData, sdpOffer }, callback) => {
-
-            socket.room_id = room_id;
-
-            if (roomList.has(socket.room_id)) {
-                //callback({ error: 'already exists' });
-            } else {
-                log.debug('Created room', { room_id: socket.room_id });
-                const worker = await getMediasoupWorker();
-                roomList.set(socket.room_id, new Room(socket.room_id, worker, io));
-            }
-
-            const data = checkXSS(clientData);
-
-            log.info('User joined', data);
-
-            const room = roomList.get(socket.room_id);
-
-            const { peer_name, peer_id, peer_uuid, peer_token, os_name, os_version, browser_name, browser_version } = data.peer_info;
-
-
-            const SDPeer = new Peer(socket.id, data)
-            room.addPeer(SDPeer);
-            room.addSDPeer(SDPeer);
-            const socketData = {
-                id: socket.id,
-                peer_name: peer_name,
-                peer_info: data.peer_info,
-            }
-
-            const rtpCapabilities = room.getRtpCapabilities();
-
-            const {sdpAnswer, producers , transport_id} = await room.createSDPTransport(socketData, sdpOffer);
-            room.addProducerToAudioLevelObserver({ producerId: producers.audio.id });
-            room.addProducerToActiveSpeakerObserver({ producerId: producers.audio.id });
-            callback({ sdpAnswer: sdpAnswer, transportId: transport_id, rtpCapabilities: rtpCapabilities });
-        });
-
-        socket.on('SDPConsume', async ({ consumerTransportId, producerId, rtpCapabilities }, callback) => {
-            console.log('consume', socket.room_id, consumerTransportId, producerId);
-            if (!roomList.has(socket.id)) {
-                return callback({ error: 'Room not found' });
-            }
-
-            const room = roomList.get(socket.room_id);
-
-            const peer_name = getPeerName(room, false);
-
-            try {
-                const params = await room.consume(socket.id, consumerTransportId, producerId, rtpCapabilities);
-
-                log.debug('SDP Consuming', {
-                    peer_name: peer_name,
-                    producer_id: producerId,
-                    consumer_id: params ? params.id : undefined,
-                });
-
-                //log.debug('Consumer transport callback', { callback: params });
-
-                callback(params);
-            } catch (err) {
-                log.error('Consumer transport error', err);
-                callback({
-                    error: err.message,
-                });
-            }
-        });
-
         // common
         function getPeerName(room, json = true) {
             try {
@@ -2055,11 +1990,11 @@ function startServer() {
         function isValidHttpURL(input) {
             const pattern = new RegExp(
                 '^(https?:\\/\\/)?' + // protocol
-                    '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' + // domain name
-                    '((\\d{1,3}\\.){3}\\d{1,3}))' + // OR ip (v4) address
-                    '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' + // port and path
-                    '(\\?[;&a-z\\d%_.~+=-]*)?' + // query string
-                    '(\\#[-a-z\\d_]*)?$',
+                '((([a-z\\d]([a-z\\d-]*[a-z\\d])*)\\.)+[a-z]{2,}|' + // domain name
+                '((\\d{1,3}\\.){3}\\d{1,3}))' + // OR ip (v4) address
+                '(\\:\\d+)?(\\/[-a-z\\d%_.~+]*)*' + // port and path
+                '(\\?[;&a-z\\d%_.~+=-]*)?' + // query string
+                '(\\#[-a-z\\d_]*)?$',
                 'i',
             ); // fragment locator
             return pattern.test(input);
@@ -2086,6 +2021,7 @@ function startServer() {
             return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
         }
     });
+    
 
     function clone(value) {
         if (value === undefined) return undefined;
@@ -2308,3 +2244,82 @@ function startServer() {
         }
     }
 }
+
+async function getMediasoupWorker() {
+    const worker = workers[nextMediasoupWorkerIdx];
+    if (++nextMediasoupWorkerIdx === workers.length) nextMediasoupWorkerIdx = 0;
+    return worker;
+}
+
+async function SDPCreateTransport(id, room_id, clientData) {
+    //socket.room_id = room_id;
+
+    if (roomList.has(room_id)) {
+        //callback({ error: 'already exists' });
+    } else {
+        log.debug('Created room', { room_id: room_id });
+        const worker = await getMediasoupWorker();
+        roomList.set(room_id, new Room(room_id, worker, io));
+    }
+
+    const data = checkXSS(clientData);
+
+    log.info('User joined', data);
+
+    const room = roomList.get(room_id);
+
+
+    const SDPeer = new Peer(id, data)
+    //room.addPeer(SDPeer);
+    room.addSDPeer(SDPeer);
+
+    const rtpCapabilities = room.getRtpCapabilities();
+    const producer_transport_id = await room.createSDPTransport(id);
+    const consumer_transport_id = await room.createSDPTransport(id);
+
+
+    //room.consumeAudioProducers(id, consumer_transport_id);
+    
+    return { producer_transport_id: producer_transport_id, consumer_transport_id: consumer_transport_id, rtpCapabilities: rtpCapabilities };
+}
+
+async function SDPProduce(peer_id, transport_id, sdpOffer) {
+    if (!roomList.has("1234")) {
+        return callback({ error: 'Room not found' });
+    }
+
+    const room = roomList.get("1234");
+
+    const { sdpAnswer, producers } = await room.addSDPProducer(peer_id, transport_id, sdpOffer);
+
+    room.addProducerToAudioLevelObserver({ producerId: producers.audio.id });
+    room.addProducerToActiveSpeakerObserver({ producerId: producers.audio.id });
+    
+    return { sdpAnswer: sdpAnswer };
+}
+
+async function SDPConsume(peer_id, consumer_transport_id) {
+    //console.log('consume', socket.room_id, consumerTransportId, producerId);
+    if (!roomList.has("1234")) {
+        return callback({ error: 'Room not found' });
+    }
+
+    const room = roomList.get("1234");
+
+    room.consumeAudioProducers(peer_id, consumer_transport_id);
+}
+
+async function SDPAnswer(peer_id, sdpAnswer) {
+    if (!roomList.has("1234")) {
+        return callback({ error: 'Room not found' });
+    }
+
+    const room = roomList.get("1234");
+
+    room.consumeSDPAnswer(peer_id, sdpAnswer);
+}
+
+module.exports.SDPCreateTransport = SDPCreateTransport;
+module.exports.SDPProduce = SDPProduce;
+module.exports.SDPConsume = SDPConsume;
+module.exports.SDPAnswer = SDPAnswer;

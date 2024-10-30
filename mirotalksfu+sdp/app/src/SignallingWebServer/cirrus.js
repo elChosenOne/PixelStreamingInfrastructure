@@ -1,8 +1,5 @@
 const logging = require('./modules/logging.js');
-
-const io = require('socket.io-client');
-
-let BTSocket;
+const server = require('../Server.js');
 
 logging.RegisterConsoleLogger();
 
@@ -12,9 +9,6 @@ var streamerPort = 8888; // port to listen to Streamer connections
 
 var clientConfig = { type: 'config', peerConnectionOptions: {} };
 
-let GRTPCapabilities = null;
-let GTransportID = null;
-
 console.logColor(logging.Cyan, `Running Cirrus - The Pixel Streaming reference implementation signalling server for Unreal Engine 5.2.`);
 
 let nextPlayerId = 1;
@@ -23,31 +17,36 @@ const StreamerType = { Regular: 0, SFU: 1 };
 
 class Streamer {
 	constructor(initialId, ws, type) {
-		console.log("Constructor Streamer");
+		//console.log("Constructor Streamer");
 		this.id = initialId;
 		this.ws = ws;
 		this.type = type;
 		this.idCommitted = false;
+		this.peerData = null;
+
+		this.rtpCapabilities = null;
+		this.producer_transport_id = null;
+		this.consumer_transport_id = null;
 	}
 
 	// registers this streamers id
 	commitId(id) {
-		console.log("Commit ID Streamer");
+		//console.log("Commit ID Streamer");
 		this.id = id;
 		this.idCommitted = true;
 	}
 
 	// returns true if we have a valid id
 	isIdCommitted() {
-		console.log("Is ID Committed Streamer");
+		//console.log("Is ID Committed Streamer");
 		return this.idCommitted;
 	}
 
 	// links this streamer to a subscribed SFU player (player component of an SFU)
 	addSFUPlayer(sfuPlayerId) {
-		console.log("Add SFU Player Streamer");
+		//console.log("Add SFU Player Streamer");
 		if (!!this.SFUPlayerId && this.SFUPlayerId != sfuPlayerId) {
-			console.error(`Streamer ${this.id} already has an SFU ${this.SFUPlayerId}. Trying to add ${sfuPlayerId} as SFU.`);
+			//console.error(`Streamer ${this.id} already has an SFU ${this.SFUPlayerId}. Trying to add ${sfuPlayerId} as SFU.`);
 			return;
 		}
 		this.SFUPlayerId = sfuPlayerId;
@@ -55,27 +54,27 @@ class Streamer {
 
 	// removes the previously subscribed SFU player
 	removeSFUPlayer() {
-		console.log("Remove SFU Player Streamer");
+		//console.log("Remove SFU Player Streamer");
 		delete this.SFUPlayerId;
 	}
 
 	// gets the player id of the subscribed SFU if any
 	getSFUPlayerId() {
-		console.log("Get SFU Player ID Streamer");
+		//console.log("Get SFU Player ID Streamer");
 		return this.SFUPlayerId;
 	}
 
 	// returns true if this streamer is forwarding another streamer
 	isSFU() {
-		console.log("Is SFU Streamer");
+		//console.log("Is SFU Streamer");
 		return this.type == StreamerType.SFU;
 	}
 
 	// links this streamer to a player, used for SFU connections since they have both components
 	setSFUPlayerComponent(playerComponent) {
-		console.log("Set SFU Player Component Streamer");
+		//console.log("Set SFU Player Component Streamer");
 		if (!this.isSFU()) {
-			console.error(`Trying to add an SFU player component ${playerComponent.id} to streamer ${this.id} but it is not an SFU type.`);
+			//console.error(`Trying to add an SFU player component ${playerComponent.id} to streamer ${this.id} but it is not an SFU type.`);
 			return;
 		}
 		this.sfuPlayerComponent = playerComponent;
@@ -83,9 +82,9 @@ class Streamer {
 
 	// gets the player component for this sfu
 	getSFUPlayerComponent() {
-		console.log("Get SFU Player Component Streamer");
+		//console.log("Get SFU Player Component Streamer");
 		if (!this.isSFU()) {
-			console.error(`Trying to get an SFU player component from streamer ${this.id} but it is not an SFU type.`);
+			//console.error(`Trying to get an SFU player component from streamer ${this.id} but it is not an SFU type.`);
 			return null;
 		}
 		return this.sfuPlayerComponent;
@@ -97,7 +96,7 @@ const WhoSendsOffer = { Streamer: 0, Browser: 1 };
 
 class Player {
 	constructor(id, ws, type, whoSendsOffer) {
-		console.log("Constructor Player");
+		//console.log("Constructor Player");
 		this.id = id;
 		this.ws = ws;
 		this.type = type;
@@ -105,12 +104,12 @@ class Player {
 	}
 
 	isSFU() {
-		console.log("Is SFU Player");
+		//console.log("Is SFU Player");
 		return this.type == PlayerType.SFU;
 	}
 
 	subscribe(streamerId) {
-		console.log("Subscribe Player");
+		//console.log("Subscribe Player");
 		if (!streamers.has(streamerId)) {
 			console.error(`subscribe: Player ${this.id} tried to subscribe to a non-existent streamer ${streamerId}`);
 			return;
@@ -126,7 +125,7 @@ class Player {
 	}
 
 	unsubscribe() {
-		console.log("Unsubscribe Player");
+		//console.log("Unsubscribe Player");
 		if (this.streamerId && streamers.has(this.streamerId)) {
 			if (this.type == PlayerType.SFU) {
 				let streamer = streamers.get(this.streamerId);
@@ -144,15 +143,15 @@ class Player {
 	}
 
 	sendFrom(message) {
-		console.log("Send From Player");
+		//console.log("Send From Player");
 		if (!this.streamerId) {
-			console.log("If 1 sendFrom Player");
+			//console.log("If 1 sendFrom Player");
 			if (streamers.size > 0) {
-				console.log("If 2 sendFrom Player");
+				//console.log("If 2 sendFrom Player");
 				this.streamerId = streamers.entries().next().value[0];
 				console.logColor(logging.Orange, `Player ${this.id} attempted to send an outgoing message without having subscribed first. Defaulting to ${this.streamerId}`);
 			} else {
-				console.log("Else 2 sendFrom Player");
+				//console.log("Else 2 sendFrom Player");
 				console.logColor(logging.Orange, `Player ${this.id} attempted to send an outgoing message without having subscribed first. No streamer connected so this message isn't going anywhere!`)
 				return;
 			}
@@ -161,7 +160,7 @@ class Player {
 		// normally we want to indicate what player this message came from
 		// but in some instances we might already have set this (streamerDataChannels) due to poor choices
 		if (!message.playerId) {
-			console.log("If 3 sendFrom Player");
+			//console.log("If 3 sendFrom Player");
 			message.playerId = this.id;
 		}
 		const msgString = JSON.stringify(message);
@@ -170,30 +169,30 @@ class Player {
 		if (!streamer) {
 			console.error(`sendFrom: Player ${this.id} subscribed to non-existent streamer: ${this.streamerId}`);
 		} else {
-			console.log("Sending message");
+			//console.log("Sending message");
 			streamer.ws.send(msgString);
 		}
 	}
 
 	sendTo(message) {
-		console.log("Send To Player");
+		//console.log("Send To Player");
 		const msgString = JSON.stringify(message);
 		this.ws.send(msgString);
 	}
 
 	setSFUStreamerComponent(streamerComponent) {
-		console.log("Set SFU Streamer Component Player");
+		//console.log("Set SFU Streamer Component Player");
 		if (!this.isSFU()) {
-			console.error(`Trying to add an SFU streamer component ${streamerComponent.id} to player ${this.id} but it is not an SFU type.`);
+			//console.error(`Trying to add an SFU streamer component ${streamerComponent.id} to player ${this.id} but it is not an SFU type.`);
 			return;
 		}
 		this.sfuStreamerComponent = streamerComponent;
 	}
 
 	getSFUStreamerComponent() {
-		console.log("Get SFU Streamer Component Player");
+		//console.log("Get SFU Streamer Component Player");
 		if (!this.isSFU()) {
-			console.error(`Trying to get an SFU streamer component from player ${this.id} but it is not an SFU type.`);
+			//console.error(`Trying to get an SFU streamer component from player ${this.id} but it is not an SFU type.`);
 			return null;
 		}
 		return this.sfuStreamerComponent;
@@ -208,15 +207,15 @@ const streamerIdTimeoutSecs = 5;
 
 // gets the SFU subscribed to this streamer if any.
 function getSFUForStreamer(streamerId) {
-	console.log("Get SFU For Streamer");
+	//console.log("Get SFU For Streamer");
 	if (!streamers.has(streamerId)) {
-		console.log("If 1 Get SFU For Streamer");
+		//console.log("If 1 Get SFU For Streamer");
 		return null;
 	}
 	const streamer = streamers.get(streamerId);
 	const sfuPlayerId = streamer.getSFUPlayerId();
 	if (!sfuPlayerId) {
-		console.log("If 2 Get SFU For Streamer");
+		//console.log("If 2 Get SFU For Streamer");
 		return null;
 	}
 	return players.get(sfuPlayerId);
@@ -239,29 +238,29 @@ let WebSocket = require('ws');
 let sfuMessageHandlers = new Map();
 
 function sanitizePlayerId(playerId) {
-	console.log("Sanitize Player ID");
+	//console.log("Sanitize Player ID");
 	if (playerId && typeof playerId === 'number') {
-		console.log("If 1 Sanitize Player ID");
+		//console.log("If 1 Sanitize Player ID");
 		playerId = playerId.toString();
 	}
 	return playerId;
 }
 
 function getPlayerIdFromMessage(msg) {
-	console.log("Get Player ID From Message");	
+	//console.log("Get Player ID From Message");	
 	return sanitizePlayerId(msg.playerId);
 }
 
 let uniqueLegacyStreamerPostfix = 0;
 function getUniqueLegacyStreamerId() {
-	console.log("Get Unique Legacy Streamer ID");
+	//console.log("Get Unique Legacy Streamer ID");
 	const finalId = LegacyStreamerPrefix + uniqueLegacyStreamerPostfix;
 	++uniqueLegacyStreamerPostfix;
 	return finalId;
 }
 
 function requestStreamerId(streamer) {
-	console.log("Request Streamer ID");
+	//console.log("Request Streamer ID");
 	// first we ask the streamer to id itself.
 	// if it doesnt reply within a time limit we assume it's an older streamer
 	// and assign it an id.
@@ -290,7 +289,7 @@ function requestStreamerId(streamer) {
 }
 
 function sanitizeStreamerId(id) {
-	console.log("Sanitize Streamer ID");
+	//console.log("Sanitize Streamer ID");
 	let maxPostfix = -1;
 	for (let [streamerId, streamer] of streamers) {
 		const idMatchRegex = /^(.*?)(\d*)$/;
@@ -311,17 +310,17 @@ function sanitizeStreamerId(id) {
 }
 
 function registerStreamer(id, streamer) {
-	console.log("Register Streamer");
+	//console.log("Register Streamer");
 	// remove any existing streamer id
 	if (!!streamer.id) {
-		console.log("If 1 Register Streamer");
+		//console.log("If 1 Register Streamer");
 		// notify any connected peers of rename
 		const renameMessage = { type: "streamerIDChanged", newID: id };
 		let clone = new Map(players);
 		for (let player of clone.values()) {
-			console.log("For Register Streamer");
+			//console.log("For Register Streamer");
 			if (player.streamerId == streamer.id) {
-				console.log("If 2 Register Streamer");
+				//console.log("If 2 Register Streamer");
 				logOutgoing(player.id, renameMessage);
 				player.sendTo(renameMessage);
 				player.streamerId = id; // reassign the subscription
@@ -333,7 +332,7 @@ function registerStreamer(id, streamer) {
 	const uniqueId = sanitizeStreamerId(id);
 	streamer.commitId(uniqueId);
 	if (!!streamer.idTimer) {
-		console.log("If 3 Register Streamer");
+		//console.log("If 3 Register Streamer");
 		clearTimeout(streamer.idTimer);
 		delete streamer.idTimer;
 	}
@@ -343,20 +342,20 @@ function registerStreamer(id, streamer) {
 }
 
 function onStreamerDisconnected(streamer) {
-	console.log("On Streamer Disconnected");
+	//console.log("On Streamer Disconnected");
 	if (!!streamer.idTimer) {
-		console.log("If 1 On Streamer Disconnected");
+		//console.log("If 1 On Streamer Disconnected");
 		clearTimeout(streamer.idTimer);
 	}
 
 	if (!streamer.id || !streamers.has(streamer.id)) {
-		console.log("If 2 On Streamer Disconnected");
+		//console.log("If 2 On Streamer Disconnected");
 		return;
 	}
 
 	let sfuPlayer = getSFUForStreamer(streamer.id);
 	if (sfuPlayer) {
-		console.log("If 3 On Streamer Disconnected");
+		//console.log("If 3 On Streamer Disconnected");
 		const msg = { type: "streamerDisconnected" };
 		logOutgoing(sfuPlayer.id, msg);
 		sfuPlayer.sendTo(msg);
@@ -367,7 +366,7 @@ function onStreamerDisconnected(streamer) {
 }
 
 function onStreamerMessageId(streamer, msg) {
-	console.log("On Streamer Message ID");
+	//console.log("On Streamer Message ID");
 	logIncoming(streamer.id, msg);
 
 	//console.log("Streamer Message:", msg);
@@ -377,7 +376,7 @@ function onStreamerMessageId(streamer, msg) {
 }
 
 function onStreamerMessagePing(streamer, msg) {
-	console.log("On Streamer Message Ping");
+	//console.log("On Streamer Message Ping");
 	logIncoming(streamer.id, msg);
 
 	const pongMsg = JSON.stringify({ type: "pong", time: msg.time });
@@ -385,22 +384,22 @@ function onStreamerMessagePing(streamer, msg) {
 }
 
 function onStreamerMessageDisconnectPlayer(streamer, msg) {
-	console.log("On Streamer Message Disconnect Player");
+	//console.log("On Streamer Message Disconnect Player");
 	logIncoming(streamer.id, msg);
 
 	const playerId = getPlayerIdFromMessage(msg);
 	const player = players.get(playerId);
 	if (player) {
-		console.log("If 1 On Streamer Message Disconnect Player");
+		//console.log("If 1 On Streamer Message Disconnect Player");
 		player.ws.close(1011 /* internal error */, msg.reason);
 	}
 }
 
 function onStreamerMessageLayerPreference(streamer, msg) {
-	console.log("On Streamer Message Layer Preference");
+	//console.log("On Streamer Message Layer Preference");
 	let sfuPlayer = getSFUForStreamer(streamer.id);
 	if (sfuPlayer) {
-		console.log("If 1 On Streamer Message Layer Preference");
+		//console.log("If 1 On Streamer Message Layer Preference");
 		logOutgoing(sfuPlayer.id, msg);
 		sfuPlayer.sendTo(msg);
 	}
@@ -411,7 +410,7 @@ function forwardStreamerMessageToPlayer(streamer, msg) {
 	const playerId = getPlayerIdFromMessage(msg);
 	const player = players.get(playerId);
 	if (player) {
-		console.log("If 1 Forward Streamer Message To Player");
+		//console.log("If 1 Forward Streamer Message To Player");
 		delete msg.playerId;
 		logForward(streamer.id, playerId, msg);
 		player.sendTo(msg);
@@ -422,27 +421,16 @@ function forwardStreamerMessageToPlayer(streamer, msg) {
 
 /* Aqui enviar datos SDP a BTalk */
 function SendSDPOffer(streamer, msg) {
-	console.log("Send SDP Offer");
+	//console.log("Send SDP Offer");
 	//console.log("Message from streamer", streamer.id, msg);
-	connectSDP(msg.sdp);
-
-	/*
-	const playerId = getPlayerIdFromMessage(msg);
-	const player = players.get(playerId);
-	if (player) {
-		delete msg.playerId;
-		logForward(streamer.id, playerId, msg);
-		player.sendTo(msg);
-	} else {
-		console.warn("No playerId specified, cannot forward message: %s", msg);
-	}*/
+	connectSDP(streamer, msg.sdp);
 }
 
 let streamerMessageHandlers = new Map();
 streamerMessageHandlers.set('endpointId', onStreamerMessageId);
 streamerMessageHandlers.set('ping', onStreamerMessagePing);
 streamerMessageHandlers.set('offer', SendSDPOffer);
-streamerMessageHandlers.set('answer', forwardStreamerMessageToPlayer);
+streamerMessageHandlers.set('answer', sendAnswerToProducer);
 streamerMessageHandlers.set('iceCandidate', forwardStreamerMessageToPlayer);
 streamerMessageHandlers.set('disconnectPlayer', onStreamerMessageDisconnectPlayer);
 streamerMessageHandlers.set('layerPreference', onStreamerMessageLayerPreference);
@@ -461,19 +449,20 @@ streamerServer.on('connection', function (ws, req) {
 		//console.log("Server - Message Raw: ", msgRaw);
 
 		try {
-			console.log("Try 1 In Streamer Message");
+			//console.log("Try 1 In Streamer Message");
 			msg = JSON.parse(msgRaw);
 		} catch (err) {
-			console.log("Catch 1 In Streamer Message");
+			//console.log("Catch 1 In Streamer Message");
 			console.error(`Cannot parse Streamer message: ${msgRaw}\nError: ${err}`);
 			ws.close(1008, 'Cannot parse');
 			return;
 		}
 
+		console.log("Message type", msg.type);
 		let handler = streamerMessageHandlers.get(msg.type);
 		//msg.type == 'offer' && console.log("Offer Message: ", msg);
 		if (!handler || (typeof handler != 'function')) {
-			console.log("If 1 In Streamer Message");
+			//console.log("If 1 In Streamer Message");
 			console.logColor(logging.White, "\x1b[37m-> %s\x1b[34m: %s", streamer.id, msgRaw);
 
 			console.error(`unsupported Streamer message type: ${msg.type}`);
@@ -513,55 +502,18 @@ function forwardSFUMessageToStreamer(sfuPlayer, msg) {
 }
 
 async function connectToBTalk(streamer) {
-	console.log("Connect To BTalk");
+	//console.log("Connect To BTalk");
 	let playerId = sanitizePlayerId(nextPlayerId++);
-	BTSocket = io("ws://localhost:3010", { transports: ['websocket'], rejectUnauthorized: false });
 
-	const playerComponent = new Player(playerId, BTSocket, PlayerType.SFU, WhoSendsOffer.Streamer);
+	const playerComponent = new Player(playerId, { send: (msg) => {console.log("send", msg)} }, PlayerType.SFU, WhoSendsOffer.Streamer);
 	playerComponent.setSFUStreamerComponent(streamer);
 	players.set(playerId, playerComponent);
-	
-	BTSocket.send = (msg) => {
-	};
-	BTSocket.on('newSDPProducers', (data) => {
-		console.log("BTSocket New SDP Producers");
-		if (data.length > 0) {
-			if (GRTPCapabilities && GTransportID) {
-				for (let { producer_id, peer_name, peer_info, type, producerTransportId, sdpOffer } of data) {
-					playerComponent.sendFrom(sdpOffer);
-				}
-			}
-		}
-	});
+	onPlayerMessageSubscribe(playerComponent, { type: 'subscribe', streamerId: streamer.id });
 
-	BTSocket.on('connect', async () => {
-		console.log("BTSocket Connected");
-		onPlayerMessageSubscribe(playerComponent, { type: 'subscribe', streamerId: streamer.id });
-	});
-
-	BTSocket.request = function request(type, data = {}) {
-		console.log("BTSocket Request");	
-		return new Promise((resolve, reject) => {
-			BTSocket.emit(type, data, (data) => {
-				if (data.error) {
-					reject(data.error);
-				} else {
-					console.log('SocketOn Request:', data);
-					resolve(data);
-				}
-			});
-		});
-	};
-	BTSocket.on('message', (data) => {
-		console.log("Message de BTalk: ", data);
-	});
-}
-
-async function connectSDP(sdpData) {
-	//console.log("BTalk -> ", BTSocket);
+	const id = streamer.id;
 	const userData = {
 		peer_name: "RolPlayer",
-		peer_id: BTSocket.id,
+		peer_id: id,
 		peer_uuid: "1234",
 		peer_token: false,
 		os_name: 'Windows',
@@ -570,37 +522,54 @@ async function connectSDP(sdpData) {
 		browser_version: 126,
 	};
 
-	//console.log("SDP Data: ", sdpData);
-	BTSocket.emit('SDPConnect', {
-		room_id: "1234",
-		clientData: { peer_info: userData },
-		sdpOffer: sdpData
-	}, (data) => {
-		console.log("BTSocket SocketOn SDPConnect");
+	server.SDPCreateTransport(id, "1234", {peer_info: userData}).then((data) => {
+		//console.log("BTSocket SocketOn SDPConnect");
 		if (data.error) {
 			console.log("SocketOn Error: ", data.error);
 		} else {
-			console.log("BTSocket else 1");
-			const { sdpAnswer, transportId, rtpCapabilities } = data;
-			
-			GTransportID = transportId;
-			GRTPCapabilities = rtpCapabilities;
+			//console.log("BTSocket else 1");
+			const { producer_transport_id, consumer_transport_id, rtpCapabilities } = data;
+
+			console.log("Producer Transport ID: ", producer_transport_id);	
+			console.log("Consumer Transport ID: ", consumer_transport_id);
+
+			streamer.producer_transport_id = producer_transport_id;
+			streamer.consumer_transport_id = consumer_transport_id;
+			streamer.rtpCapabilities = rtpCapabilities;
+		}
+	});
+}
+
+async function connectSDP(streamer, sdpData) {
+	//console.log("BTalk -> ", BTSocket);
+	const id = streamer.id;
+
+	server.SDPProduce(id, streamer.producer_transport_id, sdpData).then((data) => {
+		//console.log("BTSocket SocketOn SDPConnect");
+		if (data.error) {
+			console.log("SocketOn Error: ", data.error);
+		} else {
+			//console.log("BTSocket else 1");
+			const { sdpAnswer } = data;
 
 			const answer = { type: "answer", sdp: sdpAnswer }
 			const player = players.get("1");
+			//console.log("Answer");
 			forwardSFUMessageToStreamer(player, answer);
+		
+			server.SDPConsume(id, streamer.consumer_transport_id);
 		}
 	});
 }
 
 function onPlayerMessageSubscribe(player, msg) {
-	console.log("On Player Message Subscribe");
+	//console.log("On Player Message Subscribe");
 	logIncoming(player.id, msg);
 	player.subscribe(msg.streamerId);
 }
 
 function disconnectAllPlayers(streamerId) {
-	console.log(`unsubscribing all players on ${streamerId}`);
+	//console.log(`unsubscribing all players on ${streamerId}`);
 	let clone = new Map(players);
 	for (let player of clone.values()) {
 		if (player.streamerId == streamerId) {
@@ -614,3 +583,52 @@ function disconnectAllPlayers(streamerId) {
 		}
 	}
 }
+
+function sendOfferToStreamer(streamerId, peerId, sdpOffer) {
+  const offerSignal = {
+    type: "offer",
+    playerId: peerId,
+    sdp: sdpOffer,
+    sfu: true // indicate we're offering from sfu
+  };
+	//console.log("Streamers: ", streamers);
+	if (!streamers.has(streamerId)) {
+		console.error(`sendOfferToStreamer: Streamer ${streamerId} does not exist.`);
+		return;
+	}
+
+	const streamer = streamers.get(streamerId);
+	
+	logForward(peerId, streamer.id, offerSignal);
+	streamer.ws.send(JSON.stringify(offerSignal));
+
+  // send offer to peer
+  //signalServer.send(JSON.stringify(offerSignal));
+}
+
+function sendOfferToAllStreamers(peerId, sdpOffer) {
+  const offerSignal = {
+    type: "offer",
+    playerId: peerId,
+    sdp: sdpOffer,
+    sfu: true // indicate we're offering from sfu
+  };
+
+	streamers.forEach((streamer) => {
+		logForward(peerId, streamer.id, offerSignal);
+		streamer.ws.send(JSON.stringify(offerSignal));
+	});
+
+  //send offer to peer
+  //signalServer.send(JSON.stringify(offerSignal));
+}
+
+function sendAnswerToProducer(streamer, msg) {
+	//console.log("Send Answer To Producer");
+	//console.log("Streamer: ", streamer.id, msg.playerId);	
+	//console.log("Producer Message: ", msg);
+	server.SDPAnswer(streamer.id, msg.sdp)
+}
+
+module.exports.sendOfferToStreamer = sendOfferToStreamer;
+module.exports.sendOfferToAllStreamers = sendOfferToAllStreamers;
