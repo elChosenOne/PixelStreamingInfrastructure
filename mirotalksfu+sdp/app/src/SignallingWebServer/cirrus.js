@@ -599,6 +599,8 @@ function sendOfferToStreamer(streamerId, peerId, sdpOffer) {
 
 	const streamer = streamers.get(streamerId);
 	
+	console.log("Sending from", peerId);
+	//"UIInteraction"
 	logForward(peerId, streamer.id, offerSignal);
 	streamer.ws.send(JSON.stringify(offerSignal));
 
@@ -614,6 +616,8 @@ function sendOfferToAllStreamers(peerId, sdpOffer) {
     sfu: true // indicate we're offering from sfu
   };
 
+	console.log("Sending offer to all streamers from", peerId);
+
 	streamers.forEach((streamer) => {
 		logForward(peerId, streamer.id, offerSignal);
 		streamer.ws.send(JSON.stringify(offerSignal));
@@ -624,8 +628,15 @@ function sendOfferToAllStreamers(peerId, sdpOffer) {
 }
 
 function sendAnswerToProducer(streamer, msg) {
+  const offerSignal = {
+    type: "UIInteraction",
+    playerId: msg.playerId,
+  };
+	
+	streamer.ws.send(JSON.stringify(offerSignal));
+
 	//console.log("Send Answer To Producer");
-	//console.log("Streamer: ", streamer.id, msg.playerId);	
+	console.log("Streamer: ", streamer.id, msg.playerId);	
 	//console.log("Producer Message: ", msg);
 	server.SDPAnswer(streamer.id, msg.sdp)
 }
